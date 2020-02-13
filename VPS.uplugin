@@ -1,0 +1,24 @@
+{
+	"FileVersion": 3,
+	"Version": 1,
+	"VersionName": "1.0",
+	"FriendlyName": "VPS",
+	"Description": "Verlet Particle Simulation",
+	"Category": "Other",
+	"CreatedBy": "UnrealXinda",
+	"CreatedByURL": "",
+	"DocsURL": "",
+	"MarketplaceURL": "",
+	"SupportURL": "",
+	"CanContainContent": true,
+	"IsBetaVersion": false,
+	"IsExperimentalVersion": false,
+	"Installed": false,
+	"Modules": [
+    {
+      "Name": "VPS",
+      "Type": "Runtime",
+      "LoadingPhase": "PostConfigInit"
+    }
+	]
+}
