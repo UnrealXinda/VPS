@@ -418,8 +418,8 @@ void UProceduralClothComponent::VerletIntegrateParallel(float InSubstepTime, con
 			ClothVerletComputeShader->SetShaderParameters(RHICmdList, UniformParam);
 
 			// Dispatch shader
-			const int ThreadGroupCountX = StaticCast<int>(HorizontalVertexCount / 32);
-			const int ThreadGroupCountY = StaticCast<int>(VerticalVertexCount / 32);
+			const int ThreadGroupCountX = FMath::CeilToInt(HorizontalVertexCount / 32.f);
+			const int ThreadGroupCountY = FMath::CeilToInt(VerticalVertexCount / 32.f);
 			const int ThreadGroupCountZ = 1;
 			DispatchComputeShader(RHICmdList, *ClothVerletComputeShader, ThreadGroupCountX, ThreadGroupCountY, ThreadGroupCountZ);
 
@@ -456,7 +456,7 @@ void UProceduralClothComponent::SolveConstraintsParallel()
 					ClothConstraintComputeShader->SetShaderParameters(RHICmdList, UniformParam);
 
 					// Dispatch shader
-					const int ThreadGroupCountX = StaticCast<int>(((Direction == 0) ? VerticalVertexCount : HorizontalVertexCount) / 64);
+					const int ThreadGroupCountX = FMath::CeilToInt(((Direction == 0) ? VerticalVertexCount : HorizontalVertexCount) / 64.f);
 					const int ThreadGroupCountY = 1;
 					const int ThreadGroupCountZ = 1;
 					DispatchComputeShader(RHICmdList, *ClothConstraintComputeShader, ThreadGroupCountX, ThreadGroupCountY, ThreadGroupCountZ);

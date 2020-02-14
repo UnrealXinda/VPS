@@ -74,17 +74,22 @@ void SolveClothConstraint(uint3 ThreadId : SV_DispatchThreadID)
     [branch]
     if (Direction == 0)
     {
-        [loop]
-        for (int Index = 0; Index < SizeX - 1; ++Index)
+        [branch]
+        if (ThreadId.x < SizeY)
         {
-            IndexA = (ThreadId.x * SizeX) + Index;
-            IndexB = IndexA + 1;
-        
-            if (IndexA < BufferSize && IndexB < BufferSize)
+            [loop]
+            for (int Index = 0; Index < SizeX - 1; ++Index)
             {
+                IndexA = (ThreadId.x * SizeX) + Index;
+                IndexB = IndexA + 1;
                 SolveDistanceConstraint(OutputParticleBuffer[IndexA], OutputParticleBuffer[IndexB], DesiredDistance);
-                OutputPositionBuffer[IndexA] = OutputParticleBuffer[IndexA].NewLoc;
-                OutputPositionBuffer[IndexB] = OutputParticleBuffer[IndexB].NewLoc;
+            }
+            
+            [loop]
+            for (int Idx = 0; Idx < SizeX; ++Idx)
+            {
+                int ParticleIdx = ThreadId.x * SizeX + Idx;
+                OutputPositionBuffer[ParticleIdx] = OutputParticleBuffer[ParticleIdx].NewLoc;
             }
         }
     }
@@ -92,17 +97,22 @@ void SolveClothConstraint(uint3 ThreadId : SV_DispatchThreadID)
     // Solve vertical constraint
     else
     {
-        [loop]
-        for (int Index = 0; Index < SizeY - 1; ++Index)
+        [branch]
+        if (ThreadId.x < SizeX)
         {
-            IndexA = (Index * SizeX) + ThreadId.x;
-            IndexB = IndexA + SizeX;
-        
-            if (IndexA < BufferSize && IndexB < BufferSize)
+            [loop]
+            for (int Index = 0; Index < SizeY - 1; ++Index)
             {
+                IndexA = (Index * SizeX) + ThreadId.x;
+                IndexB = IndexA + SizeX;
                 SolveDistanceConstraint(OutputParticleBuffer[IndexA], OutputParticleBuffer[IndexB], DesiredDistance);
-                OutputPositionBuffer[IndexA] = OutputParticleBuffer[IndexA].NewLoc;
-                OutputPositionBuffer[IndexB] = OutputParticleBuffer[IndexB].NewLoc;
+            }
+            
+            [loop]
+            for (int Idx = 0; Idx < SizeY; ++Idx)
+            {
+                int ParticleIdx = ThreadId.x * SizeX + ThreadId.x;
+                OutputPositionBuffer[ParticleIdx] = OutputParticleBuffer[ParticleIdx].NewLoc;
             }
         }
     }
