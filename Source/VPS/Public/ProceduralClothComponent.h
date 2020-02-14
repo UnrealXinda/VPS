@@ -77,9 +77,12 @@ protected:
 	/** Amount of time 'left over' from last tick */
 	float TimeRemainder;
 
-	TResourceArray<FClothParticle> ClothParticles;  // Declared as TResourceArray to be compatible with GPU solver
+	TArray<FClothParticle>     ClothParticles;
+	TArray<FVector>            ClothPositions;
 
 	FStructuredBufferRHIRef    ParticlesStructuredBuffer;
 	FUnorderedAccessViewRHIRef ParticlesStructuredBufferUAV;
 
+	FStructuredBufferRHIRef    PositionsStructuredBuffer;
+	FUnorderedAccessViewRHIRef PositionsStructuredBufferUAV;
 };

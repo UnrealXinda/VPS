@@ -30,6 +30,7 @@ void SolveDistanceConstraint(inout FClothParticle ParticleA, inout FClothParticl
 }
 
 RWStructuredBuffer<FClothParticle> OutputParticleBuffer;
+RWStructuredBuffer<float3> OutputPositionBuffer;
 
 [numthreads(32, 32, 1)]
 void ComputeClothVerlet(uint3 ThreadId : SV_DispatchThreadID)
@@ -82,13 +83,16 @@ void SolveClothConstraint(uint3 ThreadId : SV_DispatchThreadID)
             if (IndexA < BufferSize && IndexB < BufferSize)
             {
                 SolveDistanceConstraint(OutputParticleBuffer[IndexA], OutputParticleBuffer[IndexB], DesiredDistance);
+                OutputPositionBuffer[IndexA] = OutputParticleBuffer[IndexA].NewLoc;
+                OutputPositionBuffer[IndexB] = OutputParticleBuffer[IndexB].NewLoc;
             }
-        }           
+        }
     }
     
     // Solve vertical constraint
     else
     {
+        [loop]
         for (int Index = 0; Index < SizeY - 1; ++Index)
         {
             IndexA = (Index * SizeX) + ThreadId.x;
@@ -97,6 +101,8 @@ void SolveClothConstraint(uint3 ThreadId : SV_DispatchThreadID)
             if (IndexA < BufferSize && IndexB < BufferSize)
             {
                 SolveDistanceConstraint(OutputParticleBuffer[IndexA], OutputParticleBuffer[IndexB], DesiredDistance);
+                OutputPositionBuffer[IndexA] = OutputParticleBuffer[IndexA].NewLoc;
+                OutputPositionBuffer[IndexB] = OutputParticleBuffer[IndexB].NewLoc;
             }
         }
     }
