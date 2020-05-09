@@ -57,34 +57,27 @@ public:
 		return IsFeatureLevelSupported(Platform, ERHIFeatureLevel::SM5);
 	}
 
-	virtual bool Serialize(FArchive& Ar) override
-	{
-		bool bShaderHasOutdatedParameters = FGlobalShader::Serialize(Ar);
-		Ar << OutputParticleBuffer;
-		return bShaderHasOutdatedParameters;
-	}
-
 	void BindShaderBuffers(FRHICommandList& RHICmdList, FUnorderedAccessViewRHIRef OutputParticleBufferUAV)
 	{
-		FRHIComputeShader* ComputeShaderRHI = GetComputeShader();
+		FRHIComputeShader* ComputeShaderRHI = RHICmdList.GetBoundComputeShader();
 		SetUAVParameter(RHICmdList, ComputeShaderRHI, OutputParticleBuffer, OutputParticleBufferUAV);
 	}
 
 	void UnbindShaderBuffers(FRHICommandList& RHICmdList)
 	{
-		FRHIComputeShader* ComputeShaderRHI = GetComputeShader();
+		FRHIComputeShader* ComputeShaderRHI = RHICmdList.GetBoundComputeShader();
 		SetUAVParameter(RHICmdList, ComputeShaderRHI, OutputParticleBuffer, FUnorderedAccessViewRHIRef());
 	}
 
 	void SetShaderParameters(FRHICommandList& RHICmdList, const FClothVerletComputeShaderParameters& Parameters)
 	{
-		FRHIComputeShader* ComputeShaderRHI = GetComputeShader();
+		FRHIComputeShader* ComputeShaderRHI = RHICmdList.GetBoundComputeShader();
 		SetUniformBufferParameterImmediate(RHICmdList, ComputeShaderRHI, GetUniformBufferParameter<FClothVerletComputeShaderParameters>(), Parameters);
 	}
 
 private:
 
-	FShaderResourceParameter OutputParticleBuffer;
+	LAYOUT_FIELD(FShaderResourceParameter, OutputParticleBuffer);
 };
 
 class FClothConstraintComputeShader : public FGlobalShader
@@ -111,41 +104,34 @@ public:
 		return IsFeatureLevelSupported(Platform, ERHIFeatureLevel::SM5);
 	}
 
-	virtual bool Serialize(FArchive& Ar) override
-	{
-		bool bShaderHasOutdatedParameters = FGlobalShader::Serialize(Ar);
-		Ar << OutputParticleBuffer << OutputPositionBuffer;
-		return bShaderHasOutdatedParameters;
-	}
-
 	void BindShaderBuffers(FRHICommandList& RHICmdList, FUnorderedAccessViewRHIRef OutputParticleBufferUAV, FUnorderedAccessViewRHIRef OutputPositionBufferUAV)
 	{
-		FRHIComputeShader* ComputeShaderRHI = GetComputeShader();
+		FRHIComputeShader* ComputeShaderRHI = RHICmdList.GetBoundComputeShader();
 		SetUAVParameter(RHICmdList, ComputeShaderRHI, OutputParticleBuffer, OutputParticleBufferUAV);
 		SetUAVParameter(RHICmdList, ComputeShaderRHI, OutputPositionBuffer, OutputPositionBufferUAV);
 	}
 
 	void UnbindShaderBuffers(FRHICommandList& RHICmdList)
 	{
-		FRHIComputeShader* ComputeShaderRHI = GetComputeShader();
+		FRHIComputeShader* ComputeShaderRHI = RHICmdList.GetBoundComputeShader();
 		SetUAVParameter(RHICmdList, ComputeShaderRHI, OutputParticleBuffer, FUnorderedAccessViewRHIRef());
 		SetUAVParameter(RHICmdList, ComputeShaderRHI, OutputPositionBuffer, FUnorderedAccessViewRHIRef());
 	}
 
 	void SetShaderParameters(FRHICommandList& RHICmdList, const FClothConstraintComputeShaderParameters& Parameters)
 	{
-		FRHIComputeShader* ComputeShaderRHI = GetComputeShader();
+		FRHIComputeShader* ComputeShaderRHI = RHICmdList.GetBoundComputeShader();
 		SetUniformBufferParameterImmediate(RHICmdList, ComputeShaderRHI, GetUniformBufferParameter<FClothConstraintComputeShaderParameters>(), Parameters);
 	}
 
 private:
 
-	FShaderResourceParameter OutputParticleBuffer;
-	FShaderResourceParameter OutputPositionBuffer;
+	LAYOUT_FIELD(FShaderResourceParameter, OutputParticleBuffer);
+	LAYOUT_FIELD(FShaderResourceParameter, OutputPositionBuffer);
 };
 
-IMPLEMENT_SHADER_TYPE(, FClothVerletComputeShader, TEXT("/Plugin/VPS/ClothConstraintComputeShader.usf"), TEXT("ComputeClothVerlet"), SF_Compute);
-IMPLEMENT_SHADER_TYPE(, FClothConstraintComputeShader, TEXT("/Plugin/VPS/ClothConstraintComputeShader.usf"), TEXT("SolveClothConstraint"), SF_Compute);
+IMPLEMENT_GLOBAL_SHADER(FClothVerletComputeShader,     "/Plugin/VPS/ClothConstraintComputeShader.usf", "ComputeClothVerlet", SF_Compute);
+IMPLEMENT_GLOBAL_SHADER(FClothConstraintComputeShader, "/Plugin/VPS/ClothConstraintComputeShader.usf", "SolveClothConstraint", SF_Compute);
 
 namespace
 {
@@ -189,6 +175,9 @@ UProceduralClothComponent::UProceduralClothComponent(const FObjectInitializer& O
 
 	PrimaryComponentTick.bCanEverTick = true;
 	PrimaryComponentTick.bStartWithTickEnabled = true;
+
+	bTickInEditor = true;
+	bAutoActivate = true;
 }
 
 void UProceduralClothComponent::OnRegister()
@@ -404,7 +393,7 @@ void UProceduralClothComponent::VerletIntegrateParallel(float InSubstepTime, con
 			check(IsInRenderingThread());
 
 			TShaderMapRef<FClothVerletComputeShader> ClothVerletComputeShader(GetGlobalShaderMap(ERHIFeatureLevel::SM5));
-			RHICmdList.SetComputeShader(ClothVerletComputeShader->GetComputeShader());
+			RHICmdList.SetComputeShader(ClothVerletComputeShader.GetComputeShader());
 
 			// Bind shader buffers
 			ClothVerletComputeShader->BindShaderBuffers(RHICmdList, ParticlesStructuredBufferUAV);
@@ -421,7 +410,7 @@ void UProceduralClothComponent::VerletIntegrateParallel(float InSubstepTime, con
 			const int ThreadGroupCountX = FMath::CeilToInt(HorizontalVertexCount / 32.f);
 			const int ThreadGroupCountY = FMath::CeilToInt(VerticalVertexCount / 32.f);
 			const int ThreadGroupCountZ = 1;
-			DispatchComputeShader(RHICmdList, *ClothVerletComputeShader, ThreadGroupCountX, ThreadGroupCountY, ThreadGroupCountZ);
+			DispatchComputeShader(RHICmdList, ClothVerletComputeShader, ThreadGroupCountX, ThreadGroupCountY, ThreadGroupCountZ);
 
 			// Unbind shader buffers
 			ClothVerletComputeShader->UnbindShaderBuffers(RHICmdList);
@@ -438,7 +427,7 @@ void UProceduralClothComponent::SolveConstraintsParallel()
 			check(IsInRenderingThread());
 
 			TShaderMapRef<FClothConstraintComputeShader> ClothConstraintComputeShader(GetGlobalShaderMap(ERHIFeatureLevel::SM5));
-			RHICmdList.SetComputeShader(ClothConstraintComputeShader->GetComputeShader());
+			RHICmdList.SetComputeShader(ClothConstraintComputeShader.GetComputeShader());
 
 			for (int32 Iteration = 0; Iteration < SolverIterationCount; ++Iteration)
 			{
@@ -459,7 +448,7 @@ void UProceduralClothComponent::SolveConstraintsParallel()
 					const int ThreadGroupCountX = FMath::CeilToInt(((Direction == 0) ? VerticalVertexCount : HorizontalVertexCount) / 64.f);
 					const int ThreadGroupCountY = 1;
 					const int ThreadGroupCountZ = 1;
-					DispatchComputeShader(RHICmdList, *ClothConstraintComputeShader, ThreadGroupCountX, ThreadGroupCountY, ThreadGroupCountZ);
+					DispatchComputeShader(RHICmdList, ClothConstraintComputeShader, ThreadGroupCountX, ThreadGroupCountY, ThreadGroupCountZ);
 
 					// Unbind shader buffers
 					ClothConstraintComputeShader->UnbindShaderBuffers(RHICmdList);

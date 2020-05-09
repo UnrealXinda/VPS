@@ -13,7 +13,7 @@ void SolveDistanceConstraint(inout FClothParticle ParticleA, inout FClothParticl
 
     float CurrentDistance = length(Delta);
     float ErrorFactor = (CurrentDistance - DesiredDistance) / CurrentDistance;
-
+    ErrorFactor = 0.01;
     if (ParticleA.bFree && ParticleB.bFree)
     {
         ParticleA.NewLoc += ErrorFactor * 0.5 * Delta;
@@ -64,7 +64,6 @@ void SolveClothConstraint(uint3 ThreadId : SV_DispatchThreadID)
 {
     const int SizeX = ClothConstraintUniform.SizeX;
     const int SizeY = ClothConstraintUniform.SizeY;
-    const int BufferSize = SizeX * SizeY;
     const int Direction = ClothConstraintUniform.Direction;
     const float DesiredDistance = ClothConstraintUniform.DesiredDistance;
     
@@ -111,7 +110,7 @@ void SolveClothConstraint(uint3 ThreadId : SV_DispatchThreadID)
             [loop]
             for (int Idx = 0; Idx < SizeY; ++Idx)
             {
-                int ParticleIdx = ThreadId.x * SizeX + ThreadId.x;
+                int ParticleIdx = Idx * SizeX + ThreadId.x;
                 OutputPositionBuffer[ParticleIdx] = OutputParticleBuffer[ParticleIdx].NewLoc;
             }
         }
