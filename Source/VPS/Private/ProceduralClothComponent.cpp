@@ -27,12 +27,21 @@ END_GLOBAL_SHADER_PARAMETER_STRUCT()
 IMPLEMENT_GLOBAL_SHADER_PARAMETER_STRUCT(FClothVerletComputeShaderParameters, "ClothVerletUniform");
 
 BEGIN_GLOBAL_SHADER_PARAMETER_STRUCT(FClothConstraintComputeShaderParameters, )
-	SHADER_PARAMETER(int,   SizeX)
-	SHADER_PARAMETER(int,   SizeY)
-	SHADER_PARAMETER(float, DesiredDistance)
-	SHADER_PARAMETER(int,   Direction)   // 0 for solving horizontal constraint. 1 for solving vertical constraint
+	SHADER_PARAMETER(int,     SizeX)
+	SHADER_PARAMETER(int,     SizeY)
+	SHADER_PARAMETER(int,     Direction)   // 0 for solving horizontal constraint. 1 for solving vertical constraint
+	SHADER_PARAMETER(float,   DesiredDistance)
+	SHADER_PARAMETER(float,   GroundZ)
+	SHADER_PARAMETER(float,   SphereRadius)
+	SHADER_PARAMETER(FVector, SphereLoc)
 END_GLOBAL_SHADER_PARAMETER_STRUCT()
 IMPLEMENT_GLOBAL_SHADER_PARAMETER_STRUCT(FClothConstraintComputeShaderParameters, "ClothConstraintUniform");
+
+BEGIN_GLOBAL_SHADER_PARAMETER_STRUCT(FClothNormalComputeShaderParameters, )
+	SHADER_PARAMETER(int, SizeX)
+	SHADER_PARAMETER(int, SizeY)
+END_GLOBAL_SHADER_PARAMETER_STRUCT()
+IMPLEMENT_GLOBAL_SHADER_PARAMETER_STRUCT(FClothNormalComputeShaderParameters, "ClothNormalUniform");
 
 class FClothVerletComputeShader : public FGlobalShader
 {
@@ -130,7 +139,58 @@ private:
 	LAYOUT_FIELD(FShaderResourceParameter, OutputPositionBuffer);
 };
 
-IMPLEMENT_GLOBAL_SHADER(FClothVerletComputeShader,     "/Plugin/VPS/ClothConstraintComputeShader.usf", "ComputeClothVerlet", SF_Compute);
+class FClothNormalComputeShader : public FGlobalShader
+{
+
+	DECLARE_SHADER_TYPE(FClothNormalComputeShader, Global)
+
+public:
+	FClothNormalComputeShader() {}
+	FClothNormalComputeShader(const ShaderMetaType::CompiledShaderInitializerType& Initializer)
+		: FGlobalShader(Initializer)
+	{
+		OutputPositionBuffer.Bind(Initializer.ParameterMap, TEXT("OutputPositionBuffer"));
+		OutputNormalBuffer.Bind(Initializer.ParameterMap, TEXT("OutputNormalBuffer"));
+	}
+
+	static bool ShouldCompilePermutation(const FGlobalShaderPermutationParameters& Parameters)
+	{
+		return IsFeatureLevelSupported(Parameters.Platform, ERHIFeatureLevel::SM5);
+	}
+
+	static bool ShouldCache(EShaderPlatform Platform)
+	{
+		return IsFeatureLevelSupported(Platform, ERHIFeatureLevel::SM5);
+	}
+
+	void BindShaderBuffers(FRHICommandList& RHICmdList, FUnorderedAccessViewRHIRef OutputPositionBufferUAV, FUnorderedAccessViewRHIRef OutputNormalBufferUAV)
+	{
+		FRHIComputeShader* ComputeShaderRHI = RHICmdList.GetBoundComputeShader();
+		SetUAVParameter(RHICmdList, ComputeShaderRHI, OutputPositionBuffer, OutputPositionBufferUAV);
+		SetUAVParameter(RHICmdList, ComputeShaderRHI, OutputNormalBuffer,   OutputNormalBufferUAV);
+	}
+
+	void UnbindShaderBuffers(FRHICommandList& RHICmdList)
+	{
+		FRHIComputeShader* ComputeShaderRHI = RHICmdList.GetBoundComputeShader();
+		SetUAVParameter(RHICmdList, ComputeShaderRHI, OutputPositionBuffer, FUnorderedAccessViewRHIRef());
+		SetUAVParameter(RHICmdList, ComputeShaderRHI, OutputNormalBuffer,   FUnorderedAccessViewRHIRef());
+	}
+
+	void SetShaderParameters(FRHICommandList& RHICmdList, const FClothNormalComputeShaderParameters& Parameters)
+	{
+		FRHIComputeShader* ComputeShaderRHI = RHICmdList.GetBoundComputeShader();
+		SetUniformBufferParameterImmediate(RHICmdList, ComputeShaderRHI, GetUniformBufferParameter<FClothNormalComputeShaderParameters>(), Parameters);
+	}
+
+private:
+
+	LAYOUT_FIELD(FShaderResourceParameter, OutputPositionBuffer);
+	LAYOUT_FIELD(FShaderResourceParameter, OutputNormalBuffer);
+};
+
+IMPLEMENT_GLOBAL_SHADER(FClothVerletComputeShader,     "/Plugin/VPS/ClothConstraintComputeShader.usf", "ComputeClothVerlet",   SF_Compute);
+IMPLEMENT_GLOBAL_SHADER(FClothNormalComputeShader,     "/Plugin/VPS/ClothConstraintComputeShader.usf", "ComputeClothNormal",   SF_Compute);
 IMPLEMENT_GLOBAL_SHADER(FClothConstraintComputeShader, "/Plugin/VPS/ClothConstraintComputeShader.usf", "SolveClothConstraint", SF_Compute);
 
 namespace
@@ -158,6 +218,26 @@ namespace
 			ParticleB.NewLoc -= ErrorFactor * Delta;
 		}
 	}
+
+#if VPS_CLOTH_DEBUG
+
+	void SolveSphericalConstraint(FClothParticle& Particle, float SphereRadius, FVector SphereLoc)
+	{
+		FVector Dir = Particle.NewLoc - SphereLoc;
+		float DistSqr = FVector::DotProduct(Dir, Dir);
+
+		if (DistSqr < SphereRadius * SphereRadius)
+		{
+			Particle.NewLoc = SphereLoc + SphereRadius * Dir.GetSafeNormal();
+		}
+	}
+
+	inline void SolveGroundConstraint(FClothParticle& Particle, float GroundZ)
+	{
+		Particle.NewLoc.Z = FMath::Max(GroundZ, Particle.NewLoc.Z);
+	}
+
+#endif
 }
 
 UProceduralClothComponent::UProceduralClothComponent(const FObjectInitializer& ObjectInitializer) :
@@ -172,6 +252,10 @@ UProceduralClothComponent::UProceduralClothComponent(const FObjectInitializer& O
 	ClothGravityScale = 1.0f;
 	SubstepTime = 0.02f;
 	SolverIterationCount = 1;
+
+	GroundZ = -10000.0f;
+	SphereRadius = 50.0f;
+	SphereLoc = FVector(0, 0, -10000);
 
 	PrimaryComponentTick.bCanEverTick = true;
 	PrimaryComponentTick.bStartWithTickEnabled = true;
@@ -207,7 +291,7 @@ void UProceduralClothComponent::InitClothComponent()
 		ParticlesStructuredBuffer = RHICreateStructuredBuffer(
 			sizeof(FClothParticle),                   // Stride
 			sizeof(FClothParticle) * VertexCount,     // Size
-			BUF_UnorderedAccess | BUF_ShaderResource, // Usage
+			BUF_UnorderedAccess,                      // Usage
 			CreateInfo                                // Create info
 		);
 		ParticlesStructuredBufferUAV = RHICreateUnorderedAccessView(ParticlesStructuredBuffer, true, false);
@@ -216,10 +300,18 @@ void UProceduralClothComponent::InitClothComponent()
 		PositionsStructuredBuffer = RHICreateStructuredBuffer(
 			sizeof(FVector),                          // Stride
 			sizeof(FVector) * VertexCount,            // Size
-			BUF_UnorderedAccess | BUF_ShaderResource, // Usage
+			BUF_UnorderedAccess,                      // Usage
 			CreateInfo                                // Create info
 		);
 		PositionsStructuredBufferUAV = RHICreateUnorderedAccessView(PositionsStructuredBuffer, true, false);
+
+		NormalsStructuredBuffer = RHICreateStructuredBuffer(
+			sizeof(FVector),                          // Stride
+			sizeof(FVector) * VertexCount,            // Size
+			BUF_UnorderedAccess,                      // Usage
+			CreateInfo                                // Create info
+		);
+		NormalsStructuredBufferUAV = RHICreateUnorderedAccessView(NormalsStructuredBuffer, true, false);
 	}
 }
 
@@ -229,8 +321,10 @@ void UProceduralClothComponent::InitClothParticles()
 
 	ClothParticles.Reset();
 	ClothPositions.Reset();
+	ClothNormals.Reset();
 	ClothParticles.AddUninitialized(VertexCount);
 	ClothPositions.AddUninitialized(VertexCount);
+	ClothNormals.AddUninitialized(VertexCount);
 
 	for (int32 Y = 0; Y < VerticalVertexCount; ++Y)
 	{
@@ -247,28 +341,28 @@ void UProceduralClothComponent::InitClothParticles()
 
 			ClothParticle.OldLoc = Loc;
 			ClothParticle.NewLoc = Loc;
-			ClothParticle.bFree = (X - HorizontalVertexCount + 1) != 0 && (Y - VerticalVertexCount + 1) != 0;
+			ClothParticle.bFree = !FixedParticleIndices.Contains(Index);
+			//ClothParticle.bFree = (X - HorizontalVertexCount + 1) != 0 && (Y - VerticalVertexCount + 1) != 0;
 
 			ClothPositions[Index] = Loc;
+			ClothNormals[Index] = FVector::UpVector;
 		}
 	}
 }
 
-void UProceduralClothComponent::UpdateProceduralMesh(bool bVertexOnly)
+void UProceduralClothComponent::UpdateProceduralMesh(bool bPositionAndNormalOnly)
 {
 	const int32 VertexCount = HorizontalVertexCount * VerticalVertexCount;
 
-	TArray<FVector> Normals;
 	TArray<FVector2D> UVs;
 	TArray<FColor> VertexColors;
 	TArray<FProcMeshTangent> Tangents;
 
-	if (!bVertexOnly)
+	if (!bPositionAndNormalOnly)
 	{
 		const int32 TriangleCount = (HorizontalVertexCount - 1) * (VerticalVertexCount - 1) * 6;		
 		TArray<int32> Triangles;
 
-		Normals.AddUninitialized(VertexCount);
 		UVs.AddUninitialized(VertexCount);
 		Triangles.AddUninitialized(TriangleCount);
 
@@ -280,7 +374,6 @@ void UProceduralClothComponent::UpdateProceduralMesh(bool bVertexOnly)
 				float V = StaticCast<float>(Y) / VerticalVertexCount - 1;
 				int32 Index = Y * HorizontalVertexCount + X;
 
-				Normals[Index] = FVector::UpVector;
 				UVs[Index] = FVector2D(U, V);
 			}
 		}
@@ -305,12 +398,12 @@ void UProceduralClothComponent::UpdateProceduralMesh(bool bVertexOnly)
 		}
 
 		ClearMeshSection(0);
-		CreateMeshSection(0, ClothPositions, Triangles, Normals, UVs, VertexColors, Tangents, false);
+		CreateMeshSection(0, ClothPositions, Triangles, ClothNormals, UVs, VertexColors, Tangents, false);
 	}
 
 	else
 	{
-		UpdateMeshSection(0, ClothPositions, Normals, UVs, VertexColors, Tangents);
+		UpdateMeshSection(0, ClothPositions, ClothNormals, UVs, VertexColors, Tangents);
 	}
 }
 
@@ -318,6 +411,7 @@ void UProceduralClothComponent::PerformSubstep(float InSubstepTime, const FVecto
 {
 	VerletIntegrate(InSubstepTime, Gravity);
 	SolveConstraints();
+	ComputeNormals();
 }
 
 void UProceduralClothComponent::VerletIntegrate(float InSubstepTime, const FVector& Gravity)
@@ -355,6 +449,13 @@ void UProceduralClothComponent::SolveConstraints()
 				FClothParticle& ParticleB = ClothParticles[Y * HorizontalVertexCount + X + 1];
 
 				SolveDistanceConstraint(ParticleA, ParticleB, DesiredHorizontalDistance);
+
+#if VPS_CLOTH_DEBUG
+				SolveSphericalConstraint(ParticleA, SphereRadius, SphereLoc);
+				SolveSphericalConstraint(ParticleA, SphereRadius, SphereLoc);
+				SolveGroundConstraint(ParticleA, GroundZ);
+				SolveGroundConstraint(ParticleB, GroundZ);
+#endif
 			}
 		}
 
@@ -367,6 +468,13 @@ void UProceduralClothComponent::SolveConstraints()
 				FClothParticle& ParticleB = ClothParticles[(Y + 1) * HorizontalVertexCount + X];
 
 				SolveDistanceConstraint(ParticleA, ParticleB, DesiredVerticalDistance);
+
+#if VPS_CLOTH_DEBUG
+				SolveSphericalConstraint(ParticleA, SphereRadius, SphereLoc);
+				SolveSphericalConstraint(ParticleA, SphereRadius, SphereLoc);
+				SolveGroundConstraint(ParticleA, GroundZ);
+				SolveGroundConstraint(ParticleB, GroundZ);
+#endif
 			}
 		}
 	}
@@ -378,10 +486,66 @@ void UProceduralClothComponent::SolveConstraints()
 	});
 }
 
+void UProceduralClothComponent::ComputeNormals()
+{
+	ParallelFor(ClothParticles.Num(), [&](int32 Index)
+	{
+		const int32 X = Index % HorizontalVertexCount;
+		const int32 Y = Index / HorizontalVertexCount;
+		const FVector ParticlePos = ClothPositions[Index];
+		FVector DirA, DirB;
+		int32 IndexA, IndexB;
+
+		IndexA = X > 0 ? X - 1 : 1; // Favor left side
+		IndexB = Y > 0 ? Y - 1 : 1; // Favor up side
+
+		FVector PosA = ClothPositions[Y * HorizontalVertexCount + IndexA]; // Left side position
+		FVector PosB = ClothPositions[IndexB * HorizontalVertexCount + X]; // Up side position
+
+		DirA = PosA - ParticlePos;
+		DirB = PosB - ParticlePos;
+
+		ClothNormals[Index] = (DirB ^ DirA).GetSafeNormal();
+
+		if ((X == 0) ^ (Y == 0))
+		{
+			ClothNormals[Index] *= -1;
+		}
+	});
+
+	//for (int32 Y = 0; Y < VerticalVertexCount; ++Y)
+	//{
+	//	for (int32 X = 0; X < HorizontalVertexCount; ++X)
+	//	{
+	//		int32 Index = Y * HorizontalVertexCount + X;
+	//		FVector ParticlePos = ClothPositions[Index];
+	//		FVector DirA, DirB;
+	//		int32 IndexA, IndexB;
+
+	//		IndexA = X > 0 ? X - 1 : 1; // Favor left side
+	//		IndexB = Y > 0 ? Y - 1 : 1; // Favor up side
+
+	//		FVector PosA = ClothPositions[Y * HorizontalVertexCount + IndexA]; // Left side position
+	//		FVector PosB = ClothPositions[IndexB * HorizontalVertexCount + X]; // Up side position
+
+	//		DirA = PosA - ParticlePos;
+	//		DirB = PosB - ParticlePos;
+
+	//		ClothNormals[Index] = (DirB ^ DirA).GetSafeNormal();
+
+	//		if ((X == 0) ^ (Y == 0))
+	//		{
+	//			ClothNormals[Index] *= -1;
+	//		}
+	//	}
+	//}
+}
+
 void UProceduralClothComponent::PerformSubstepParallel(float InSubstepTime, const FVector& Gravity)
 {
 	VerletIntegrateParallel(InSubstepTime, Gravity);
 	SolveConstraintsParallel();
+	ComputeNormalsParallel();
 }
 
 void UProceduralClothComponent::VerletIntegrateParallel(float InSubstepTime, const FVector& Gravity)
@@ -433,14 +597,24 @@ void UProceduralClothComponent::SolveConstraintsParallel()
 			{
 				for (uint32 Direction = 0; Direction <= 1; ++Direction)
 				{
+					// Make UAV safe for read
+					RHICmdList.TransitionResource(
+						EResourceTransitionAccess::ERWBarrier,
+						EResourceTransitionPipeline::EComputeToCompute,
+						PositionsStructuredBufferUAV,
+						nullptr);
+
 					// Bind shader buffers
 					ClothConstraintComputeShader->BindShaderBuffers(RHICmdList, ParticlesStructuredBufferUAV, PositionsStructuredBufferUAV);
 
 					// Bind shader uniform
 					FClothConstraintComputeShaderParameters UniformParam;
-					UniformParam.SizeX = HorizontalVertexCount;
-					UniformParam.SizeY = VerticalVertexCount;
-					UniformParam.Direction = Direction;
+					UniformParam.SizeX           = HorizontalVertexCount;
+					UniformParam.SizeY           = VerticalVertexCount;
+					UniformParam.Direction       = Direction;
+					UniformParam.GroundZ         = GroundZ;
+					UniformParam.SphereRadius    = SphereRadius;
+					UniformParam.SphereLoc       = SphereLoc;
 					UniformParam.DesiredDistance = (Direction == 0) ? HorizontalDistance : VerticalDistance;
 					ClothConstraintComputeShader->SetShaderParameters(RHICmdList, UniformParam);
 
@@ -455,12 +629,72 @@ void UProceduralClothComponent::SolveConstraintsParallel()
 				}
 			}
 
+			// Make UAV safe for read
+			RHICmdList.TransitionResource(
+				EResourceTransitionAccess::ERWBarrier,
+				EResourceTransitionPipeline::EComputeToCompute,
+				PositionsStructuredBufferUAV,
+				nullptr);
+
 			// Read back the position buffer. No need to copy back the particle buffer since all we care about is position
 			const int32 BufferSize = HorizontalVertexCount * VerticalVertexCount * sizeof(FVector);
 			FVector* SrcPtr = (FVector*)RHILockStructuredBuffer(PositionsStructuredBuffer.GetReference(), 0, BufferSize, EResourceLockMode::RLM_ReadOnly);
 			FVector* DstPtr = ClothPositions.GetData();
 			FMemory::Memcpy(DstPtr, SrcPtr, BufferSize);
 			RHIUnlockStructuredBuffer(PositionsStructuredBuffer.GetReference());
+		}
+	);
+}
+
+void UProceduralClothComponent::ComputeNormalsParallel()
+{
+	ENQUEUE_RENDER_COMMAND(ClothComputeCommands)
+	(
+		[this](FRHICommandListImmediate& RHICmdList)
+		{
+			check(IsInRenderingThread());
+
+			// Make UAV safe for read
+			RHICmdList.TransitionResource(
+				EResourceTransitionAccess::ERWBarrier,
+				EResourceTransitionPipeline::EComputeToCompute,
+				PositionsStructuredBufferUAV,
+				nullptr);
+
+			TShaderMapRef<FClothNormalComputeShader> ClothNormalComputeShader(GetGlobalShaderMap(ERHIFeatureLevel::SM5));
+			RHICmdList.SetComputeShader(ClothNormalComputeShader.GetComputeShader());
+
+			// Bind shader buffers
+			ClothNormalComputeShader->BindShaderBuffers(RHICmdList, PositionsStructuredBufferUAV, NormalsStructuredBufferUAV);
+
+			// Bind shader uniform
+			FClothNormalComputeShaderParameters UniformParam;
+			UniformParam.SizeX = HorizontalVertexCount;
+			UniformParam.SizeY = VerticalVertexCount;
+			ClothNormalComputeShader->SetShaderParameters(RHICmdList, UniformParam);
+
+			// Dispatch shader
+			const int ThreadGroupCountX = FMath::CeilToInt(HorizontalVertexCount / 32.f);
+			const int ThreadGroupCountY = FMath::CeilToInt(VerticalVertexCount / 32.f);
+			const int ThreadGroupCountZ = 1;
+			DispatchComputeShader(RHICmdList, ClothNormalComputeShader, ThreadGroupCountX, ThreadGroupCountY, ThreadGroupCountZ);
+
+			// Unbind shader buffers
+			ClothNormalComputeShader->UnbindShaderBuffers(RHICmdList);
+
+			// Make UAV safe for read
+			RHICmdList.TransitionResource(
+				EResourceTransitionAccess::ERWBarrier,
+				EResourceTransitionPipeline::EComputeToCompute,
+				NormalsStructuredBufferUAV,
+				nullptr);
+
+			// Read back the normal buffer
+			const int32 BufferSize = HorizontalVertexCount * VerticalVertexCount * sizeof(FVector);
+			FVector* SrcPtr = (FVector*)RHILockStructuredBuffer(NormalsStructuredBuffer.GetReference(), 0, BufferSize, EResourceLockMode::RLM_ReadOnly);
+			FVector* DstPtr = ClothNormals.GetData();
+			FMemory::Memcpy(DstPtr, SrcPtr, BufferSize);
+			RHIUnlockStructuredBuffer(NormalsStructuredBuffer.GetReference());
 		}
 	);
 }
@@ -478,6 +712,8 @@ void UProceduralClothComponent::ReleaseBufferResources()
 	SafeReleaseBufferResource(ParticlesStructuredBufferUAV);
 	SafeReleaseBufferResource(PositionsStructuredBuffer);
 	SafeReleaseBufferResource(PositionsStructuredBufferUAV);
+	SafeReleaseBufferResource(NormalsStructuredBuffer);
+	SafeReleaseBufferResource(NormalsStructuredBufferUAV);
 }
 
 void UProceduralClothComponent::TickComponent(float DeltaTime, enum ELevelTick TickType, FActorComponentTickFunction *ThisTickFunction)
@@ -491,7 +727,14 @@ void UProceduralClothComponent::TickComponent(float DeltaTime, enum ELevelTick T
 	UpdateProceduralMesh(true);
 
 	// Need to send new data to render thread
-	MarkRenderDynamicDataDirty();
+	if (CastShadow)
+	{
+		MarkRenderStateDirty();
+	}
+	else
+	{
+		MarkRenderDynamicDataDirty();
+	}
 
 	// Call this because bounds have changed
 	UpdateComponentToWorld();
