@@ -195,6 +195,15 @@ IMPLEMENT_GLOBAL_SHADER(FClothConstraintComputeShader, "/Plugin/VPS/ClothConstra
 
 namespace
 {
+	template <class T>
+	FORCEINLINE void ReleaseBufferResource(T Resource)
+	{
+		if (Resource.IsValid())
+		{
+			Resource->Release();
+		}
+	}
+
 	void SolveDistanceConstraint(FClothParticle& ParticleA, FClothParticle& ParticleB, float DesiredDistance)
 	{
 		// Find current vector between particles
@@ -512,33 +521,6 @@ void UProceduralClothComponent::ComputeNormals()
 			ClothNormals[Index] *= -1;
 		}
 	});
-
-	//for (int32 Y = 0; Y < VerticalVertexCount; ++Y)
-	//{
-	//	for (int32 X = 0; X < HorizontalVertexCount; ++X)
-	//	{
-	//		int32 Index = Y * HorizontalVertexCount + X;
-	//		FVector ParticlePos = ClothPositions[Index];
-	//		FVector DirA, DirB;
-	//		int32 IndexA, IndexB;
-
-	//		IndexA = X > 0 ? X - 1 : 1; // Favor left side
-	//		IndexB = Y > 0 ? Y - 1 : 1; // Favor up side
-
-	//		FVector PosA = ClothPositions[Y * HorizontalVertexCount + IndexA]; // Left side position
-	//		FVector PosB = ClothPositions[IndexB * HorizontalVertexCount + X]; // Up side position
-
-	//		DirA = PosA - ParticlePos;
-	//		DirB = PosB - ParticlePos;
-
-	//		ClothNormals[Index] = (DirB ^ DirA).GetSafeNormal();
-
-	//		if ((X == 0) ^ (Y == 0))
-	//		{
-	//			ClothNormals[Index] *= -1;
-	//		}
-	//	}
-	//}
 }
 
 void UProceduralClothComponent::PerformSubstepParallel(float InSubstepTime, const FVector& Gravity)
@@ -701,19 +683,12 @@ void UProceduralClothComponent::ComputeNormalsParallel()
 
 void UProceduralClothComponent::ReleaseBufferResources()
 {
-#define SafeReleaseBufferResource(Texture)   \
-	do {                                     \
-		if (Texture.IsValid()) {             \
-			Texture->Release();              \
-		}                                    \
-	} while(0);
-
-	SafeReleaseBufferResource(ParticlesStructuredBuffer);
-	SafeReleaseBufferResource(ParticlesStructuredBufferUAV);
-	SafeReleaseBufferResource(PositionsStructuredBuffer);
-	SafeReleaseBufferResource(PositionsStructuredBufferUAV);
-	SafeReleaseBufferResource(NormalsStructuredBuffer);
-	SafeReleaseBufferResource(NormalsStructuredBufferUAV);
+	ReleaseBufferResource<FStructuredBufferRHIRef>(ParticlesStructuredBuffer);
+	ReleaseBufferResource<FStructuredBufferRHIRef>(PositionsStructuredBuffer);
+	ReleaseBufferResource<FStructuredBufferRHIRef>(NormalsStructuredBuffer);
+	ReleaseBufferResource<FUnorderedAccessViewRHIRef>(ParticlesStructuredBufferUAV);
+	ReleaseBufferResource<FUnorderedAccessViewRHIRef>(PositionsStructuredBufferUAV);
+	ReleaseBufferResource<FUnorderedAccessViewRHIRef>(NormalsStructuredBufferUAV);
 }
 
 void UProceduralClothComponent::TickComponent(float DeltaTime, enum ELevelTick TickType, FActorComponentTickFunction *ThisTickFunction)
