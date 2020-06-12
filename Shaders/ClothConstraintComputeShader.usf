@@ -29,34 +29,91 @@ void SolveDistanceConstraint(inout FClothParticle ParticleA, inout FClothParticl
     }
 }
 
+void SolveSphericalConstraint(inout FClothParticle Particle, float SphereRadius, float3 SphereLoc)
+{
+	float3 Dir = Particle.NewLoc - SphereLoc;
+	float DistSqr = dot(Dir, Dir);
+	
+	if (DistSqr < SphereRadius * SphereRadius)
+	{
+		Particle.NewLoc = SphereLoc + SphereRadius * normalize(Dir);
+	}
+}
+
+void SolveGroundConstraint(inout FClothParticle Particle, float GroundZ)
+{
+	Particle.NewLoc.z = max(GroundZ, Particle.NewLoc.z);
+}
+
 RWStructuredBuffer<FClothParticle> OutputParticleBuffer;
 RWStructuredBuffer<float3> OutputPositionBuffer;
+RWStructuredBuffer<float3> OutputNormalBuffer;
 
 [numthreads(32, 32, 1)]
 void ComputeClothVerlet(uint3 ThreadId : SV_DispatchThreadID)
 {
-    const int SizeX = ClothVerletUniform.SizeX;
-    const int SizeY = ClothVerletUniform.SizeY;
+	const int SizeX = ClothVerletUniform.SizeX;
+	const int SizeY = ClothVerletUniform.SizeY;
+	const int BufferSize = SizeX * SizeY;
+	const float SubStepSqr = ClothVerletUniform.SubStepSqr;
+	const float3 Gravity = ClothVerletUniform.Gravity;
+    
+	int Index = ThreadId.y * SizeX + ThreadId.x;
+    
+	[Branch]
+	if (Index < BufferSize)
+	{
+		if (OutputParticleBuffer[Index].bFree)
+		{
+			const float3 OldLoc = OutputParticleBuffer[Index].OldLoc;
+			const float3 NewLoc = OutputParticleBuffer[Index].NewLoc;
+            
+			float3 DeltaLoc = NewLoc - OldLoc;
+			float3 UpdatedLoc = NewLoc + DeltaLoc + (SubStepSqr * Gravity);
+
+			OutputParticleBuffer[Index].OldLoc = NewLoc;
+			OutputParticleBuffer[Index].NewLoc = UpdatedLoc;
+		}
+	}
+}
+
+[numthreads(32, 32, 1)]
+void ComputeClothNormal(uint3 ThreadId : SV_DispatchThreadID)
+{
+    const int SizeX = ClothNormalUniform.SizeX;
+    const int SizeY = ClothNormalUniform.SizeY;
     const int BufferSize = SizeX * SizeY;
-    const float SubStepSqr = ClothVerletUniform.SubStepSqr;
-    const float3 Gravity = ClothVerletUniform.Gravity;
     
-    int Index = ThreadId.y * SizeX + ThreadId.x;
+	const int X = ThreadId.x;
+	const int Y = ThreadId.y;
+    const int Index = Y * SizeX + X;
     
+	[Branch]
     if (Index < BufferSize)
     {
-        if (OutputParticleBuffer[Index].bFree)
-        {
-            const float3 OldLoc = OutputParticleBuffer[Index].OldLoc;
-            const float3 NewLoc = OutputParticleBuffer[Index].NewLoc;
-            
-            float3 DeltaLoc = NewLoc - OldLoc;
-            float3 UpdatedLoc = NewLoc + DeltaLoc + (SubStepSqr * Gravity);
+		float3 ParticlePos = OutputPositionBuffer[Index];
+		float3 DirA, DirB;
+		float3 ParticleNormal;
+		int IndexA, IndexB;
 
-            OutputParticleBuffer[Index].OldLoc = NewLoc;
-            OutputParticleBuffer[Index].NewLoc = UpdatedLoc;
-        }
-    }
+		IndexA = X > 0 ? X - 1 : 1; // Favor left side
+		IndexB = Y > 0 ? Y - 1 : 1; // Favor up side
+
+		float3 PosA = OutputPositionBuffer[Y * SizeX + IndexA]; // Left side position
+		float3 PosB = OutputPositionBuffer[IndexB * SizeX + X]; // Up side position
+
+		DirA = PosA - ParticlePos;
+		DirB = PosB - ParticlePos;
+
+		ParticleNormal = normalize(cross(DirB, DirA));
+
+		if ((X == 0) ^ (Y == 0))
+		{
+			ParticleNormal *= -1;
+		}
+		
+		OutputNormalBuffer[Index] = ParticleNormal;
+	}
 }
 
 [numthreads(64, 1, 1)]
@@ -64,9 +121,12 @@ void SolveClothConstraint(uint3 ThreadId : SV_DispatchThreadID)
 {
     const int SizeX = ClothConstraintUniform.SizeX;
     const int SizeY = ClothConstraintUniform.SizeY;
-    const int BufferSize = SizeX * SizeY;
     const int Direction = ClothConstraintUniform.Direction;
     const float DesiredDistance = ClothConstraintUniform.DesiredDistance;
+	
+	const float GroundZ = ClothConstraintUniform.GroundZ;
+	const float SphereRadius = ClothConstraintUniform.SphereRadius;
+	const float3 SphereLoc = ClothConstraintUniform.SphereLoc;
     
     int IndexA, IndexB;
     
@@ -82,8 +142,13 @@ void SolveClothConstraint(uint3 ThreadId : SV_DispatchThreadID)
             {
                 IndexA = (ThreadId.x * SizeX) + Index;
                 IndexB = IndexA + 1;
-                SolveDistanceConstraint(OutputParticleBuffer[IndexA], OutputParticleBuffer[IndexB], DesiredDistance);
-            }
+				SolveDistanceConstraint(OutputParticleBuffer[IndexA], OutputParticleBuffer[IndexB], DesiredDistance);
+				SolveSphericalConstraint(OutputParticleBuffer[IndexA], SphereRadius, SphereLoc);
+				SolveSphericalConstraint(OutputParticleBuffer[IndexB], SphereRadius, SphereLoc);
+				SolveGroundConstraint(OutputParticleBuffer[IndexA], GroundZ);
+				SolveGroundConstraint(OutputParticleBuffer[IndexB], GroundZ);
+
+			}
             
             [loop]
             for (int Idx = 0; Idx < SizeX; ++Idx)
@@ -105,13 +170,17 @@ void SolveClothConstraint(uint3 ThreadId : SV_DispatchThreadID)
             {
                 IndexA = (Index * SizeX) + ThreadId.x;
                 IndexB = IndexA + SizeX;
-                SolveDistanceConstraint(OutputParticleBuffer[IndexA], OutputParticleBuffer[IndexB], DesiredDistance);
-            }
+				SolveDistanceConstraint(OutputParticleBuffer[IndexA], OutputParticleBuffer[IndexB], DesiredDistance);
+				SolveSphericalConstraint(OutputParticleBuffer[IndexA], SphereRadius, SphereLoc);
+				SolveSphericalConstraint(OutputParticleBuffer[IndexB], SphereRadius, SphereLoc);
+				SolveGroundConstraint(OutputParticleBuffer[IndexA], GroundZ);
+				SolveGroundConstraint(OutputParticleBuffer[IndexB], GroundZ);
+			}
             
             [loop]
             for (int Idx = 0; Idx < SizeY; ++Idx)
             {
-                int ParticleIdx = ThreadId.x * SizeX + ThreadId.x;
+                int ParticleIdx = Idx * SizeX + ThreadId.x;
                 OutputPositionBuffer[ParticleIdx] = OutputParticleBuffer[ParticleIdx].NewLoc;
             }
         }
