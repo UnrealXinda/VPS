@@ -6,6 +6,8 @@
 #include "ProceduralMeshComponent.h"
 #include "ProceduralClothComponent.generated.h"
 
+#define VPS_CLOTH_DEBUG 1
+
 struct FClothParticle
 {
 	int     bFree;
@@ -47,6 +49,9 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Cloth Physics")
 	uint8 bUseGPUAcceleration : 1;
 
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Cloth Physics")
+	TArray<uint8> FixedParticleIndices;
+
 public:
 
 	UProceduralClothComponent(const FObjectInitializer& ObjectInitializer);
@@ -55,18 +60,20 @@ public:
 	void InitClothComponent();
 
 	void InitClothParticles();
-	void UpdateProceduralMesh(bool bVertexOnly);
+	void UpdateProceduralMesh(bool bPositionAndNormalOnly);
 	void TickClothComponent(float DeltaTime);
 
 	// CPU parallel solver
 	void PerformSubstep(float InSubstepTime, const FVector& Gravity);
 	void VerletIntegrate(float InSubstepTime, const FVector& Gravity);
 	void SolveConstraints();
+	void ComputeNormals();
 
 	// GPU parallel solver
 	void PerformSubstepParallel(float InSubstepTime, const FVector& Gravity);
 	void VerletIntegrateParallel(float InSubstepTime, const FVector& Gravity);
 	void SolveConstraintsParallel();
+	void ComputeNormalsParallel();
 	void ReleaseBufferResources();
 
 	virtual void OnRegister() override;
@@ -74,12 +81,32 @@ public:
 
 protected:
 
+//#if VPS_CLOTH_DEBUG
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Cloth Debug")
+	float GroundZ;	
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, meta = (ClampMin = 0), Category = "Cloth Debug")
+	float SphereRadius;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, DisplayName = "Sphere Location", Category = "Cloth Debug")
+	FVector SphereLoc;
+
+//#endif
+
 	/** Amount of time 'left over' from last tick */
 	float TimeRemainder;
 
-	TResourceArray<FClothParticle> ClothParticles;  // Declared as TResourceArray to be compatible with GPU solver
+	TArray<FClothParticle>     ClothParticles;
+	TArray<FVector>            ClothPositions;
+	TArray<FVector>            ClothNormals;
 
 	FStructuredBufferRHIRef    ParticlesStructuredBuffer;
 	FUnorderedAccessViewRHIRef ParticlesStructuredBufferUAV;
 
+	FStructuredBufferRHIRef    PositionsStructuredBuffer;
+	FUnorderedAccessViewRHIRef PositionsStructuredBufferUAV;
+
+	FStructuredBufferRHIRef    NormalsStructuredBuffer;
+	FUnorderedAccessViewRHIRef NormalsStructuredBufferUAV;
 };
